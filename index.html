@@ -7,6 +7,7 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Push &amp; Pull">
 <title>Push &amp; Pull Tracker</title>
 <script>
@@ -14,8 +15,8 @@
 // Config: per-exercise rep bounds. Reps in every set stay within [min, max].
 // ---------------------------------------------------------------------------
 const EX = {
-  pushups: { name: "Push-ups", emoji: "💪", min: 8, max: 12 },
-  pullups: { name: "Pull-ups", emoji: "🦾", min: 4, max: 6 },
+  pushups: { name: "Push-ups", emoji: "💪", min: 8, max: 12, color: "#0284c7" },
+  pullups: { name: "Pull-ups", emoji: "🦾", min: 4, max: 6, color: "#ea580c" },
 };
 const KEY = "pushpull.v1";
 
@@ -52,13 +53,23 @@ function advance(ex, key) {
 // Rendering
 // ---------------------------------------------------------------------------
 let state = null;
+let view = "main"; // "main" | "progress"  — always resets to "main" on load
+
+function show(id) {
+  ["setup", "main", "progress"].forEach(v => {
+    document.getElementById(v).style.display = v === id ? "block" : "none";
+  });
+}
 
 function render() {
   state = load();
-  document.getElementById("setup").style.display = state ? "none" : "block";
-  document.getElementById("main").style.display = state ? "block" : "none";
-  if (state) renderMain();
+  if (!state) { show("setup"); return; }
+  if (view === "progress") { show("progress"); renderProgress(); }
+  else { show("main"); renderMain(); }
 }
+
+function showProgress() { view = "progress"; render(); }
+function showMain() { view = "main"; render(); }
 
 function renderMain() {
   const key = state.current;
@@ -108,7 +119,14 @@ function neededSets(total, key) {
 
 function completeWorkout() {
   const key = state.current;
-  advance(state[key], key);
+  const ex = state[key];
+  // Record the session that was just performed (before advancing for next time).
+  if (!state.history) state.history = [];
+  state.history.push({
+    t: Date.now(), ex: key, sets: ex.sets, total: ex.total,
+    reps: distribute(ex.total, ex.sets),
+  });
+  advance(ex, key);
   state.current = key === "pushups" ? "pullups" : "pushups";
   state.workout += 1;
   save(state);
@@ -120,7 +138,100 @@ function completeWorkout() {
 }
 
 function resetAll() {
-  if (confirm("Reset all progress and start over?")) { wipe(); render(); }
+  if (confirm("Reset all progress and start over?")) { view = "main"; wipe(); render(); }
+}
+
+// ---------------------------------------------------------------------------
+// Progress page
+// ---------------------------------------------------------------------------
+const nf = n => n.toLocaleString();
+
+function fmtDate(t) {
+  const d = new Date(t);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) +
+    ", " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+function renderProgress() {
+  const hist = state.history || [];
+
+  // Headline stats
+  const byEx = k => hist.filter(h => h.ex === k);
+  const sum = arr => arr.reduce((a, h) => a + h.total, 0);
+  const best = arr => arr.reduce((m, h) => Math.max(m, h.total), 0);
+  const pu = byEx("pushups"), pl = byEx("pullups");
+
+  const stats = [
+    { label: "Workouts", value: nf(hist.length) },
+    { label: "Total reps", value: nf(sum(hist)) },
+    { label: "💪 Best", value: pu.length ? nf(best(pu)) : "–" },
+    { label: "🦾 Best", value: pl.length ? nf(best(pl)) : "–" },
+  ];
+  document.getElementById("stats").innerHTML = stats.map(s =>
+    `<div class="stat"><div class="stat-v">${s.value}</div><div class="stat-l">${s.label}</div></div>`
+  ).join("");
+
+  // Chart
+  document.getElementById("chart").innerHTML = buildChart(pu, pl);
+  document.getElementById("chartLegend").innerHTML = hist.length
+    ? `<span class="lg"><i style="background:${EX.pushups.color}"></i>Push-ups · ${nf(sum(pu))} total</span>
+       <span class="lg"><i style="background:${EX.pullups.color}"></i>Pull-ups · ${nf(sum(pl))} total</span>`
+    : "";
+
+  // History log (newest first)
+  const log = [...hist].reverse().map(h => {
+    const m = EX[h.ex];
+    return `<div class="logrow">
+      <div class="logex">${m.emoji}</div>
+      <div class="loginfo">
+        <div class="logtitle">${m.name} · ${h.total} reps</div>
+        <div class="logsub">${h.sets} sets · ${fmtDate(h.t)}</div>
+      </div>
+      <div class="logtotal">${h.reps.join(" ")}</div>
+    </div>`;
+  }).join("");
+  document.getElementById("log").innerHTML = log ||
+    `<div class="empty">No workouts logged yet. Complete one to start your history.</div>`;
+}
+
+// Build a two-line SVG chart of per-session totals for each exercise.
+function buildChart(pu, pl) {
+  const n = Math.max(pu.length, pl.length);
+  if (n < 2) {
+    return `<div class="empty">Complete a few workouts to see your progress 📈</div>`;
+  }
+  const W = 320, H = 170, padL = 34, padR = 12, padT = 14, padB = 22;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+
+  const all = [...pu, ...pl].map(h => h.total);
+  let yMin = Math.min(...all), yMax = Math.max(...all);
+  if (yMin === yMax) { yMin -= 1; yMax += 1; }
+  const xAt = i => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const yAt = v => padT + (1 - (v - yMin) / (yMax - yMin)) * plotH;
+
+  // gridlines + y labels (3 ticks)
+  let grid = "";
+  for (let k = 0; k <= 2; k++) {
+    const v = Math.round(yMin + (k / 2) * (yMax - yMin));
+    const y = yAt(v);
+    grid += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" class="grid"/>`;
+    grid += `<text x="${padL - 6}" y="${y + 3}" class="ylab">${v}</text>`;
+  }
+
+  const series = (arr, color) => {
+    if (!arr.length) return "";
+    const pts = arr.map((h, i) => [xAt(i), yAt(h.total)]);
+    const path = pts.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+    const dots = pts.map(p => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3" fill="${color}"/>`).join("");
+    return `<polyline points="${path}" fill="none" stroke="${color}" stroke-width="2.5"
+              stroke-linecap="round" stroke-linejoin="round"/>${dots}`;
+  };
+
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet">
+    ${grid}
+    ${series(pu, EX.pushups.color)}
+    ${series(pl, EX.pullups.color)}
+  </svg>`;
 }
 
 window.addEventListener("DOMContentLoaded", render);
@@ -195,6 +306,41 @@ window.addEventListener("DOMContentLoaded", render);
   }
   .hint { font-size: 11px; color: var(--muted); margin-top: 6px; }
   .divider { height: 1px; background: var(--line); margin: 4px 0 20px; }
+
+  /* links under main button */
+  .links { display: flex; align-items: center; justify-content: center; gap: 4px; margin-top: 16px; }
+  .links .reset { margin-top: 0; }
+  .sep { color: var(--muted); font-size: 12px; }
+
+  /* progress screen */
+  .back {
+    width: auto; background: none; color: var(--accent); font-size: 14px;
+    padding: 0 0 4px; font-weight: 600;
+  }
+  .back:hover { filter: none; text-decoration: underline; }
+  .ptitle { font-size: 22px; margin: 6px 0 18px; letter-spacing: -0.02em; }
+
+  .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 22px; }
+  .stat { background: var(--chip); border: 1px solid var(--line); border-radius: 14px; padding: 14px; text-align: center; }
+  .stat-v { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+  .stat-l { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  .chart { min-height: 60px; }
+  .chart .grid { stroke: var(--line); stroke-width: 1; }
+  .chart .ylab { fill: var(--muted); font-size: 9px; text-anchor: end; }
+  .legend { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; margin: 8px 0 4px; }
+  .lg { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .lg i { width: 12px; height: 3px; border-radius: 2px; display: inline-block; }
+
+  .loghead { font-size: 13px; font-weight: 600; color: var(--muted); margin: 20px 0 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .log { display: flex; flex-direction: column; gap: 8px; }
+  .logrow { display: flex; align-items: center; gap: 12px; background: var(--chip); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+  .logex { font-size: 22px; }
+  .loginfo { flex: 1; min-width: 0; }
+  .logtitle { font-size: 14px; font-weight: 600; }
+  .logsub { font-size: 12px; color: var(--muted); margin-top: 1px; }
+  .logtotal { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; max-width: 40%; }
+  .empty { text-align: center; color: var(--muted); font-size: 13px; padding: 24px 8px; }
 </style>
 </head>
 <body>
@@ -257,7 +403,22 @@ window.addEventListener("DOMContentLoaded", render);
     <div class="summary" id="summary"></div>
     <button id="doneBtn" onclick="completeWorkout()">Complete workout ✓</button>
     <div class="next" id="nextHint"></div>
-    <button class="reset" onclick="resetAll()">Reset progress</button>
+    <div class="links">
+      <button class="reset" onclick="showProgress()">See progress</button>
+      <span class="sep">·</span>
+      <button class="reset" onclick="resetAll()">Reset progress</button>
+    </div>
+  </div>
+
+  <!-- PROGRESS -->
+  <div id="progress" class="card" style="display:none">
+    <button class="back" onclick="showMain()">← Back</button>
+    <h2 class="ptitle">Your progress</h2>
+    <div class="stats" id="stats"></div>
+    <div class="chart" id="chart"></div>
+    <div class="legend" id="chartLegend"></div>
+    <div class="loghead">Workout history</div>
+    <div class="log" id="log"></div>
   </div>
 </div>
 </body>
