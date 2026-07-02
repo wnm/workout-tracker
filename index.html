@@ -43,12 +43,6 @@ function distribute(total, sets) {
   return out;
 }
 
-// Advance one exercise by +1 total rep, adding a set if the cap is exceeded.
-function advance(ex, key) {
-  ex.total += 1;
-  if (ex.total > ex.sets * EX[key].max) ex.sets += 1;
-}
-
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
@@ -71,22 +65,49 @@ function render() {
 function showProgress() { view = "progress"; render(); }
 function showMain() { view = "main"; render(); }
 
+// The working plan for the current workout. Starts from the proposal
+// (one more than last time) but the user can nudge each set up/down.
+// Persisted as state.pending so edits survive a reload.
+function currentPlan() {
+  const key = state.current;
+  if (state.pending && state.pending.ex === key && Array.isArray(state.pending.reps)) {
+    return state.pending.reps;
+  }
+  const reps = distribute(state[key].total, state[key].sets);
+  state.pending = { ex: key, reps };
+  save(state);
+  return reps;
+}
+
+function adjustRep(i, delta) {
+  const key = state.current, meta = EX[key];
+  const reps = currentPlan().slice();
+  reps[i] = Math.max(meta.min, Math.min(meta.max, reps[i] + delta));
+  state.pending = { ex: key, reps };
+  save(state);
+  renderMain();
+}
+
 function renderMain() {
   const key = state.current;
   const other = key === "pushups" ? "pullups" : "pushups";
   const meta = EX[key];
-  const ex = state[key];
-  const plan = distribute(ex.total, ex.sets);
+  const plan = currentPlan();
 
   document.getElementById("todayEmoji").textContent = meta.emoji;
   document.getElementById("todayName").textContent = meta.name;
   document.getElementById("workoutNum").textContent = "Workout #" + state.workout;
 
-  document.getElementById("plan").innerHTML =
-    plan.map(n => `<div class="rep">${n}</div>`).join("");
+  document.getElementById("plan").innerHTML = plan.map((n, i) => `
+    <div class="repcol">
+      <button class="arrow" onclick="adjustRep(${i},1)" ${n >= meta.max ? "disabled" : ""} aria-label="increase">▲</button>
+      <div class="rep">${n}</div>
+      <button class="arrow" onclick="adjustRep(${i},-1)" ${n <= meta.min ? "disabled" : ""} aria-label="decrease">▼</button>
+    </div>`).join("");
 
+  const total = plan.reduce((a, b) => a + b, 0);
   document.getElementById("summary").textContent =
-    `${ex.sets} sets · ${ex.total} reps total`;
+    `${plan.length} sets · ${total} reps total`;
 
   document.getElementById("nextHint").textContent =
     `Next up: ${EX[other].emoji} ${EX[other].name}`;
@@ -119,16 +140,19 @@ function neededSets(total, key) {
 
 function completeWorkout() {
   const key = state.current;
-  const ex = state[key];
-  // Record the session that was just performed (before advancing for next time).
+  const reps = currentPlan();               // what the user actually logged
+  const actual = reps.reduce((a, b) => a + b, 0);
+
+  // Record the session as performed.
   if (!state.history) state.history = [];
-  state.history.push({
-    t: Date.now(), ex: key, sets: ex.sets, total: ex.total,
-    reps: distribute(ex.total, ex.sets),
-  });
-  advance(ex, key);
+  state.history.push({ t: Date.now(), ex: key, sets: reps.length, total: actual, reps });
+
+  // Next time, propose one more than what was actually done last time.
+  const next = actual + 1;
+  state[key] = { total: next, sets: neededSets(next, key) };
   state.current = key === "pushups" ? "pullups" : "pushups";
   state.workout += 1;
+  state.pending = null;                      // clear working edits for the next exercise
   save(state);
   renderMain();
   // brief confirmation pulse
@@ -266,8 +290,9 @@ window.addEventListener("DOMContentLoaded", render);
 
   .plan {
     display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
-    margin: 26px 0 14px;
+    margin: 22px 0 14px;
   }
+  .repcol { display: flex; flex-direction: column; align-items: center; gap: 4px; }
   .rep {
     background: var(--chip); color: var(--accent);
     font-size: 30px; font-weight: 700;
@@ -275,6 +300,14 @@ window.addEventListener("DOMContentLoaded", render);
     display: flex; align-items: center; justify-content: center;
     border: 1px solid var(--line);
   }
+  .arrow {
+    width: 68px; background: none; color: var(--muted);
+    font-size: 13px; font-weight: 400; padding: 5px 0; border-radius: 8px; line-height: 1;
+  }
+  .arrow:hover { background: var(--chip); color: var(--ink); filter: none; }
+  .arrow:active { transform: none; }
+  .arrow:disabled { opacity: 0.22; cursor: default; }
+  .arrow:disabled:hover { background: none; color: var(--muted); }
   .summary { text-align: center; color: var(--muted); font-size: 14px; margin-bottom: 24px; }
 
   button {
