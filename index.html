@@ -68,22 +68,34 @@ function showMain() { view = "main"; render(); }
 // The working plan for the current workout. Starts from the proposal
 // (one more than last time) but the user can nudge each set up/down.
 // Persisted as state.pending so edits survive a reload.
-function currentPlan() {
+function ensurePending() {
   const key = state.current;
-  if (state.pending && state.pending.ex === key && Array.isArray(state.pending.reps)) {
-    return state.pending.reps;
+  const p = state.pending;
+  if (!(p && p.ex === key && Array.isArray(p.reps))) {
+    const reps = distribute(state[key].total, state[key].sets);
+    state.pending = { ex: key, reps, done: reps.map(() => false) };
+    save(state);
+  } else if (!Array.isArray(p.done) || p.done.length !== p.reps.length) {
+    p.done = p.reps.map(() => false);
+    save(state);
   }
-  const reps = distribute(state[key].total, state[key].sets);
-  state.pending = { ex: key, reps };
-  save(state);
-  return reps;
+  return state.pending;
 }
 
+function currentPlan() { return ensurePending().reps; }
+
 function adjustRep(i, delta) {
-  const key = state.current, meta = EX[key];
-  const reps = currentPlan().slice();
-  reps[i] = Math.max(meta.min, Math.min(meta.max, reps[i] + delta));
-  state.pending = { ex: key, reps };
+  const meta = EX[state.current];
+  const p = ensurePending();
+  p.reps[i] = Math.max(meta.min, Math.min(meta.max, p.reps[i] + delta));
+  save(state);
+  renderMain();
+}
+
+// Tap a set number to mark it done (green border) while working out.
+function toggleDone(i) {
+  const p = ensurePending();
+  p.done[i] = !p.done[i];
   save(state);
   renderMain();
 }
@@ -92,7 +104,8 @@ function renderMain() {
   const key = state.current;
   const other = key === "pushups" ? "pullups" : "pushups";
   const meta = EX[key];
-  const plan = currentPlan();
+  const p = ensurePending();
+  const plan = p.reps, done = p.done;
 
   document.getElementById("todayEmoji").textContent = meta.emoji;
   document.getElementById("todayName").textContent = meta.name;
@@ -101,7 +114,7 @@ function renderMain() {
   document.getElementById("plan").innerHTML = plan.map((n, i) => `
     <div class="repcol">
       <button class="arrow" onclick="adjustRep(${i},1)" ${n >= meta.max ? "disabled" : ""} aria-label="increase">▲</button>
-      <div class="rep">${n}</div>
+      <div class="rep${done[i] ? " done" : ""}" onclick="toggleDone(${i})">${n}</div>
       <button class="arrow" onclick="adjustRep(${i},-1)" ${n <= meta.min ? "disabled" : ""} aria-label="decrease">▼</button>
     </div>`).join("");
 
@@ -298,7 +311,12 @@ window.addEventListener("DOMContentLoaded", render);
     font-size: 30px; font-weight: 700;
     width: 68px; height: 68px; border-radius: 16px;
     display: flex; align-items: center; justify-content: center;
-    border: 1px solid var(--line);
+    border: 2px solid var(--line); cursor: pointer;
+    user-select: none; -webkit-user-select: none;
+    transition: border-color .12s, background .12s;
+  }
+  .rep.done {
+    border-color: var(--accent2); background: #dcfce7; color: #166534;
   }
   .arrow {
     width: 68px; background: none; color: var(--muted);
