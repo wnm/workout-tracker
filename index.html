@@ -15,7 +15,7 @@
 // Config: per-exercise rep bounds. Reps in every set stay within [min, max].
 // ---------------------------------------------------------------------------
 const EX = {
-  pushups: { name: "Push-ups", emoji: "💪", min: 8, max: 12, color: "#0284c7" },
+  pushups: { name: "Push-ups", emoji: "💪", min: 8, max: 20, color: "#0284c7" },
   pullups: { name: "Pull-ups", emoji: "🦾", min: 4, max: 6, color: "#ea580c" },
 };
 const KEY = "pushpull.v1";
@@ -121,6 +121,15 @@ function renderMain() {
   const total = plan.reduce((a, b) => a + b, 0);
   document.getElementById("summary").textContent =
     `${plan.length} sets · ${total} reps total`;
+
+  // Complete is only allowed once every set is tapped done.
+  const doneCount = done.filter(Boolean).length;
+  const allDone = doneCount === done.length;
+  const btn = document.getElementById("doneBtn");
+  btn.disabled = !allDone;
+  btn.textContent = allDone
+    ? "Complete workout ✓"
+    : `Tap each set when done · ${doneCount}/${done.length}`;
 
   document.getElementById("nextHint").textContent =
     `Next up: ${EX[other].emoji} ${EX[other].name}`;
@@ -335,6 +344,9 @@ window.addEventListener("DOMContentLoaded", render);
   }
   button:hover { filter: brightness(1.05); }
   button:active { transform: scale(0.98); }
+  #doneBtn:disabled { background: var(--chip); color: var(--muted); border: 1px solid var(--line); cursor: default; }
+  #doneBtn:disabled:hover { filter: none; }
+  #doneBtn:disabled:active { transform: none; }
   .pulse { animation: pop .4s ease; }
   @keyframes pop { 50% { transform: scale(1.03); filter: brightness(1.15); } }
 
