@@ -16,7 +16,7 @@
 // ---------------------------------------------------------------------------
 const EX = {
   pushups: { name: "Push-ups", emoji: "💪", min: 8, max: 20, color: "#0284c7" },
-  pullups: { name: "Pull-ups", emoji: "🦾", min: 4, max: 6, color: "#ea580c" },
+  pullups: { name: "Pull-ups", emoji: "🦾", min: 4, max: 8, color: "#ea580c" },
 };
 const KEY = "pushpull.v1";
 
@@ -55,9 +55,31 @@ function show(id) {
   });
 }
 
+// Re-split each exercise to the fewest sets its current cap allows. Keeps the
+// stored plan consistent when the rep cap changes (e.g. push-ups 12 -> 20),
+// so a raised cap applies right away instead of only after the next workout.
+function migrate() {
+  let changed = false;
+  ["pushups", "pullups"].forEach(key => {
+    const ex = state[key];
+    if (!ex) return;
+    const want = neededSets(ex.total, key);
+    if (ex.sets !== want) {
+      ex.sets = want;
+      changed = true;
+      if (state.pending && state.pending.ex === key &&
+          Array.isArray(state.pending.reps) && state.pending.reps.length !== want) {
+        state.pending = null; // stale working plan; rebuilt on next render
+      }
+    }
+  });
+  if (changed) save(state);
+}
+
 function render() {
   state = load();
   if (!state) { show("setup"); return; }
+  migrate();
   if (view === "progress") { show("progress"); renderProgress(); }
   else { show("main"); renderMain(); }
 }
